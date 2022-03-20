@@ -16,7 +16,6 @@ def init_parser():
 
 
 def validate_args(options):
-    print(options)
     if not options.mode:
         print("[E] No mode specified.  -h for help.")
         exit(0)
@@ -32,23 +31,26 @@ def main():
     validate_args(options)
     if options.mode == filter.EGRESS_TYPE:
         if options.container:
-            print('bu')
-        else:
-            firewall = filter.Firewall( 'tc_egress',options.interface,filter.EGRESS_TYPE,options.ips, options.block,filter.HOST_MODE,SOURCE_FILE)
+            firewall = filter.Firewall(func= 'tc_egress', interface=options.interface, filter_type = filter.EGRESS_TYPE, \
+            ips=options.ips, block = options.block, filter_mode=filter.CONTAINER_MODE, src_file = SOURCE_FILE,\
+             container_name = options.container)
             attrs = vars(firewall)
             print(', '.join("%s: %s" % item for item in attrs.items()))
-            firewall.apply_egress_filter_for_host()
+            firewall.apply_filter()
+        else:
+            firewall = filter.Firewall( 'tc_egress',options.interface,filter.EGRESS_TYPE,options.ips, options.block,filter.HOST_MODE,SOURCE_FILE)
+            firewall.apply_filter()
 
     elif options.mode == filter.INGRESS_TYPE:
         firewall = filter.Firewall( 'tc_ingress',options.interface,filter.INGRESS_TYPE,options.ips, options.block,filter.HOST_MODE,SOURCE_FILE)
-        attrs = vars(firewall)
-        print(', '.join("%s: %s" % item for item in attrs.items()))
-        firewall.apply_egress_filter_for_host()
+        firewall.apply_filter()
 
   
 if __name__ == "__main__":
     main()
 
 # python main.py -m egress -i eth0 --ips 216.58.212.206
-# tshark -i eth0 -f 'icmp'  -Tfields -e ip.src  -e ip.dst -E header=y 
-#tc qdisc del dev vetha6b026c parent ffff:
+# tc qdisc del dev vetha6b026c parent ffff:
+#  docker run -dit --name alpine3 alpine ash
+# docker start -a  alpine1  
+# python main.py -m ingress -c alpine1 --ips 216.58.212.206

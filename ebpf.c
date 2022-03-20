@@ -20,7 +20,7 @@ static __inline void print_ip(unsigned int ip)
     bytes[1] = (ip >> 8) & 0xFF;
     bytes[2] = (ip >> 16) & 0xFF;
     bytes[3] = (ip >> 24) & 0xFF;   
-    bpf_trace_printk("%d.%d.%d\n", bytes[3], bytes[2], bytes[0]);         // dst: 172.17.0.2
+    bpf_trace_printk("%d.%d.%d\n", bytes[3], bytes[2], bytes[0]);  
 }
 
 int tc_egress(struct __sk_buff *skb) {
