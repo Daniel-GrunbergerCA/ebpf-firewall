@@ -38,11 +38,13 @@ def main():
             print(', '.join("%s: %s" % item for item in attrs.items()))
             firewall.apply_filter()
         else:
-            firewall = filter.Firewall( 'tc_egress',options.interface,filter.EGRESS_TYPE,options.ips, options.block,filter.HOST_MODE,SOURCE_FILE)
+            firewall = filter.Firewall( func = 'tc_egress',interface = options.interface,filter_type = filter.EGRESS_TYPE, \
+                ips = options.ips, block = options.block,filter_mode = filter.HOST_MODE,src_file = SOURCE_FILE)
             firewall.apply_filter()
 
     elif options.mode == filter.INGRESS_TYPE:
-        firewall = filter.Firewall( 'tc_ingress',options.interface,filter.INGRESS_TYPE,options.ips, options.block,filter.HOST_MODE,SOURCE_FILE)
+        firewall = filter.Firewall(func =   'tc_ingress', interface = options.interface,filter_type =  filter.INGRESS_TYPE, \
+            ips = options.ips,block =  options.block,filter_mode =  filter.HOST_MODE,src_file =  SOURCE_FILE)
         firewall.apply_filter()
 
   

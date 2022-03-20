@@ -53,6 +53,7 @@ class Firewall:
                 veths = os.popen('ip -br addr').read()
                 # last digits of veth are veth id, which match the device_id
                 for line_veth in veths.splitlines():
+                    print(line_veth)
                     line_veth = line_veth.split()[0]
                     if "@if" in line_veth and  line_veth.split("@if")[1] == device_id:
                         return line_veth.split('@if')[0]
@@ -98,7 +99,6 @@ class Firewall:
 
     def apply_filter(self):
         TC_ARGS = dict(prio=100,handle=1)
-        
         b = BPF(src_file=self.src_file)
 
         ips_table = b.get_table(TABLE_NAME)
@@ -122,5 +122,4 @@ class Firewall:
         elif self.filter_type == INGRESS_TYPE:
             if self.filter_mode == HOST_MODE:
                 self.apply_ingress(idx,fn, TC_ARGS, b)
-
 
