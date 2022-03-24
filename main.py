@@ -12,6 +12,7 @@ def init_parser():
     parser.add_option("-i", "--interface", dest="interface", help="The interface name")
     parser.add_option( "--ips", dest="ips", help="IPs list")
     parser.add_option( "--block", dest="block", help="blacklist", default=True,  action="store_true")
+    parser.add_option( "-t", "--trace", dest="trace", help="enable tracing", default=False,  action="store_true")
     return parser.parse_args()
 
 
@@ -33,19 +34,23 @@ def main():
         if options.container:
             firewall = filter.Firewall(func= 'tc_egress', interface=options.interface, filter_type = filter.EGRESS_TYPE, \
             ips=options.ips, block = options.block, filter_mode=filter.CONTAINER_MODE, src_file = SOURCE_FILE,\
-             container_name = options.container)
-            attrs = vars(firewall)
-            print(', '.join("%s: %s" % item for item in attrs.items()))
+             container_name = options.container, trace=options.trace)
             firewall.apply_filter()
         else:
             firewall = filter.Firewall( func = 'tc_egress',interface = options.interface,filter_type = filter.EGRESS_TYPE, \
-                ips = options.ips, block = options.block,filter_mode = filter.HOST_MODE,src_file = SOURCE_FILE)
+                ips = options.ips, block = options.block,filter_mode = filter.HOST_MODE,src_file = SOURCE_FILE, trace=options.trace)
             firewall.apply_filter()
 
     elif options.mode == filter.INGRESS_TYPE:
-        firewall = filter.Firewall(func =   'tc_ingress', interface = options.interface,filter_type =  filter.INGRESS_TYPE, \
-            ips = options.ips,block =  options.block,filter_mode =  filter.HOST_MODE,src_file =  SOURCE_FILE)
-        firewall.apply_filter()
+        if options.container:
+            firewall = filter.Firewall(func= 'tc_ingress', interface=options.interface, filter_type = filter.INGRESS_TYPE, \
+            ips=options.ips, block = options.block, filter_mode=filter.CONTAINER_MODE, src_file = SOURCE_FILE,\
+             container_name = options.container, trace=options.trace)
+            firewall.apply_filter()
+        else:
+            firewall = filter.Firewall(func='tc_ingress', interface = options.interface,filter_type =  filter.INGRESS_TYPE, \
+            ips = options.ips,block =  options.block,filter_mode =  filter.HOST_MODE,src_file =  SOURCE_FILE, trace=options.trace)
+            firewall.apply_filter()
 
   
 if __name__ == "__main__":
@@ -56,3 +61,4 @@ if __name__ == "__main__":
 #  docker run -dit --name alpine3 alpine ash
 # docker start -a  alpine1  
 # python main.py -m ingress -c alpine1 --ips 216.58.212.206
+# tc qdisc del dev eth0 clsact
