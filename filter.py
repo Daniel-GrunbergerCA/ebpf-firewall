@@ -12,21 +12,26 @@ import signal
 import socket
 import struct
 
+DNS_TABLE = "dns_list"
 EGRESS_TYPE = "egress"
 INGRESS_TYPE = "ingress"
 HOST_MODE = "HOST"
 CONTAINER_MODE = "CONTAINER"
 TABLE_NAME = "ips_list"
-
+SOURCE_FILE = 'ebpf.c'
 
 class Firewall:
-    def __init__(self, func, filter_type, ips,block, filter_mode, src_file, interface, container_name="", trace=False):
-        self.func = func
+    def __init__(self, filter_type, ips,block, filter_mode, interface, container_name="", trace=False, dns_hostnames=""):
         self.filter_type = filter_type
+        if self.filter_type == INGRESS_TYPE:
+            self.func = "filter_src"
+        else:
+            self.func = "filter_dst"
+        self.dns_hostnames = dns_hostnames
         self.ips = ips
         self.block = block
         self.filter_mode = filter_mode
-        self.src_file = src_file
+        self.src_file = SOURCE_FILE
         self.container_name = container_name
         self.interface = interface
         self.trace = trace
@@ -36,6 +41,24 @@ class Firewall:
         self.b =  BPF(src_file=self.src_file)
 
     
+    def dns_filter(self):
+        dns_table = self.b.get_table(DNS_TABLE)
+        for hostname in self.dns_hostnames.split(","):
+            print(hostname)
+            self.add_cache_entry(dns_table, hostname)
+
+
+    def add_cache_entry(self, dns_table, name):
+        key = dns_table.Key()
+        key_len = len(key.p)
+        name_buffer = encode_dns(name)
+        # Pad the buffer with null bytes if it is too short
+        name_buffer.extend((0,) * (key_len - len(name_buffer)))
+        key.p = (ctypes.c_ubyte * key_len).from_buffer(name_buffer)
+        leaf = dns_table.Leaf()
+        leaf.p = (ctypes.c_ubyte * 4).from_buffer(bytearray(4))
+        dns_table[key] = leaf
+
     def get_veth_for_container_name(self):
         inspect_data = os.popen(f'docker inspect {self.container_name}').read()
         json_obj = json.loads(inspect_data)[0]
@@ -68,6 +91,7 @@ class Firewall:
 
     def apply_ingress(self, idx, fn, TC_ARGS):
         try:
+            # add qdisc
             self.ipr.tc('add','ingress', idx, "ffff:")
         except:
             print("filter already exists")
@@ -86,6 +110,7 @@ class Firewall:
 
     def apply_egress(self, idx, fn, TC_ARGS):
         try:
+            # use clsact qdisc, superset of ingress. Allow direct-action even for egress
             self.ipr.tc('replace','clsact', idx)
             self.ipr.tc("add-filter", "bpf", idx,  fd=fn.fd, name=fn.name,
                     parent="ffff:fff3",  action="drop", **TC_ARGS)
@@ -103,7 +128,8 @@ class Firewall:
 
     def apply_filter(self):
         TC_ARGS = dict(prio=100,handle=1)
-
+        if self.dns_hostnames != "":
+            self.dns_filter()
         ips_table = self.b.get_table(TABLE_NAME)
 
         for bad_ip in self.ips:
@@ -175,5 +201,18 @@ class Firewall:
 
 def int2ip(addr):
     return socket.inet_ntoa(struct.pack("!I", addr))
+
+def encode_dns(name):
+  if len(name) + 1 > 255:
+    raise Exception("DNS Name too long.")
+  b = bytearray()
+  for element in name.split('.'):
+    sublen = len(element)
+    if sublen > 63:
+      raise ValueError('DNS label %s is too long' % element)
+    b.append(sublen)
+    b.extend(element.encode('ascii'))
+  b.append(0)  # Add 0-len octet label for the root server
+  return b
 
 

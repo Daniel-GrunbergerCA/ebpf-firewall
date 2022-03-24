@@ -14,7 +14,34 @@
 #define ICMP_TYPE 1
 #define IP_UDP 17
 #define IP_ICMP 1
+#define ACCEPTED_MSG "ACCEPTED"
+#define DROPPED_MSG "DROPPED"
 
+
+struct dns_hdr_t
+{
+    uint16_t id;
+    uint16_t flags;
+    uint16_t qdcount;
+    uint16_t ancount;
+    uint16_t nscount;
+    uint16_t arcount;
+} BPF_PACKET_HEADER;
+
+struct dns_query_flags_t
+{
+  uint16_t qtype;
+  uint16_t qclass;
+} BPF_PACKET_HEADER;
+
+struct dns_char_t
+{
+    char c;
+} BPF_PACKET_HEADER;
+
+struct Key {
+  unsigned char p[255];
+};
 
 struct data_t {
     u32 src_ip;
@@ -24,23 +51,26 @@ struct data_t {
 	char protocol[4];
 	char msg[20];
 };
+struct Leaf {
+  unsigned char p[4];
+};
 
 BPF_HASH(ips_list, u32, bool, 128);
+BPF_HASH(dns_list, struct Key, struct Leaf, 128);
 BPF_PERF_OUTPUT(events);
 
-static __inline void print_ip(unsigned int ip)
+static __inline bool is_drop_ip(u32 ip, struct data_t *data)
 {
-    unsigned char bytes[4];
-    bytes[0] = ip & 0xFF;
-    bytes[1] = (ip >> 8) & 0xFF;
-    bytes[2] = (ip >> 16) & 0xFF;
-    bytes[3] = (ip >> 24) & 0xFF;   
-    bpf_trace_printk("%d.%d.%d\n", bytes[3], bytes[2], bytes[0]);  
+   if (ips_list.lookup(&ip)){
+   	__builtin_memcpy(data->msg, DROPPED_MSG, sizeof(DROPPED_MSG));
+	   return true;
+   }
+   return false;
 }
 
 
 
-int tc_egress(struct __sk_buff *skb) {
+int filter_dst(struct __sk_buff *skb) {
 	u8 *cursor = 0;
 
 	struct ethernet_t *ethernet = cursor_advance(cursor, sizeof(*ethernet));
@@ -58,8 +88,17 @@ int tc_egress(struct __sk_buff *skb) {
 
 
 	struct data_t data = {};
-	if (ip->nextp == IP_ICMP) {
+	data.src_ip = ip->src;
+	data.dst_ip = ip->dst;
+
+	u32 target_ip = ip->dst;
+	
+	 if (ip->nextp == IP_ICMP) {
 		__builtin_memcpy(&data.protocol, "ICMP", sizeof("ICMP"));
+		if (is_drop_ip(target_ip, &data)) {
+			events.perf_submit(skb, &data, sizeof(data));
+			return TC_ACT_SHOT;
+		}
 	}
 	else if (ip->nextp == IP_TCP) {
 		void *_ = cursor_advance(cursor, (ip_header_length-sizeof(*ip)));
@@ -112,19 +151,54 @@ int tc_egress(struct __sk_buff *skb) {
 			}
 			data.src_port = tcp->src_port;
 			data.dst_port = tcp->dst_port;
-	}
-	
-	
-	data.src_ip = ip->src;
-	data.dst_ip = ip->dst;
-
-	u32 target_ip = ip->dst;
-	if (ips_list.lookup(&target_ip)) {
-		__builtin_memcpy(&data.msg, "DROPPED", sizeof("DROPPED"));
+	if (is_drop_ip(target_ip, &data)) {
    		events.perf_submit(skb, &data, sizeof(data));
 		return TC_ACT_SHOT;
 	}
-	__builtin_memcpy(&data.msg, "ACCEPTED", sizeof("ACCEPTED"));
+	}
+	else if (ip->nextp == IPPROTO_UDP){
+      // Check for Port 53, DNS packet.
+      struct udp_t *udp = cursor_advance(cursor, sizeof(*udp));
+	  struct Key key = {};
+      if(udp->dport == 53){
+          __builtin_memcpy(&data.protocol, "DNS", sizeof("DNS"));
+		if (is_drop_ip(target_ip, &data)) {
+   		 events.perf_submit(skb, &data, sizeof(data));
+		 return TC_ACT_SHOT;
+	}
+        struct dns_hdr_t *dns_hdr = cursor_advance(cursor, sizeof(*dns_hdr));
+        // Do nothing if packet is not a request.
+        if((dns_hdr->flags >>15) != 0) {
+		  events.perf_submit(skb, &data, sizeof(data));
+          return TC_ACT_OK;
+        }
+
+        u16 i = 0;
+        struct dns_char_t *c;
+        for(i = 0; i<255;i++){
+          c = cursor_advance(cursor, 1);
+          if (c->c == 0)
+            break;
+          key.p[i] = c->c;
+        }
+
+        struct Leaf * lookup_leaf = dns_list.lookup(&key);
+
+        // If DNS name is contained in our map, keep the packet
+        if(lookup_leaf) {
+          __builtin_memcpy(&data.msg, DROPPED_MSG, sizeof(DROPPED_MSG));
+		  events.perf_submit(skb, &data, sizeof(data));
+          return TC_ACT_SHOT;
+        }
+		else{
+			__builtin_memcpy(&data.msg, ACCEPTED_MSG, sizeof(ACCEPTED_MSG));
+		  events.perf_submit(skb, &data, sizeof(data));
+          return TC_ACT_OK;
+		}
+      }
+	}
+	
+	__builtin_memcpy(&data.msg, ACCEPTED_MSG, sizeof(ACCEPTED_MSG));
 	
 	events.perf_submit(skb, &data, sizeof(data));
 	return TC_ACT_OK;
@@ -133,11 +207,7 @@ int tc_egress(struct __sk_buff *skb) {
 
 
 
-
-
-
-
-int tc_ingress(struct __sk_buff *skb) {
+int filter_src(struct __sk_buff *skb) {
 	u8 *cursor = 0;
 
 	struct ethernet_t *ethernet = cursor_advance(cursor, sizeof(*ethernet));
@@ -155,8 +225,18 @@ int tc_ingress(struct __sk_buff *skb) {
 
 
 	struct data_t data = {};
-	if (ip->nextp == IP_ICMP) {
+	data.src_ip = ip->src;
+	data.dst_ip = ip->dst;
+
+	u32 target_ip = ip->src;
+	
+	 if (ip->nextp == IP_ICMP) {
 		__builtin_memcpy(&data.protocol, "ICMP", sizeof("ICMP"));
+		if (ips_list.lookup(&target_ip)) {
+		__builtin_memcpy(&data.msg, DROPPED_MSG, sizeof(DROPPED_MSG));
+   		events.perf_submit(skb, &data, sizeof(data));
+		return TC_ACT_SHOT;
+	}
 	}
 	else if (ip->nextp == IP_TCP) {
 		void *_ = cursor_advance(cursor, (ip_header_length-sizeof(*ip)));
@@ -209,19 +289,56 @@ int tc_ingress(struct __sk_buff *skb) {
 			}
 			data.src_port = tcp->src_port;
 			data.dst_port = tcp->dst_port;
-	}
-	
-	
-	data.src_ip = ip->src;
-	data.dst_ip = ip->dst;
-
-	u32 target_ip = ip->src;
 	if (ips_list.lookup(&target_ip)) {
-		__builtin_memcpy(&data.msg, "DROPPED", sizeof("DROPPED"));
+		__builtin_memcpy(&data.msg, DROPPED_MSG, sizeof(DROPPED_MSG));
    		events.perf_submit(skb, &data, sizeof(data));
 		return TC_ACT_SHOT;
 	}
-	__builtin_memcpy(&data.msg, "ACCEPTED", sizeof("ACCEPTED"));
+	}
+	else if (ip->nextp == IPPROTO_UDP){
+      // Check for Port 53, DNS packet.
+      struct udp_t *udp = cursor_advance(cursor, sizeof(*udp));
+	  struct Key key = {};
+      if(udp->dport == 53){
+          __builtin_memcpy(&data.protocol, "DNS", sizeof("DNS"));
+		if (ips_list.lookup(&target_ip)) {
+		__builtin_memcpy(&data.msg, DROPPED_MSG, sizeof(DROPPED_MSG));
+   		events.perf_submit(skb, &data, sizeof(data));
+		return TC_ACT_SHOT;
+	}
+        struct dns_hdr_t *dns_hdr = cursor_advance(cursor, sizeof(*dns_hdr));
+        // Do nothing if packet is not a request.
+        if((dns_hdr->flags >>15) != 0) {
+		  events.perf_submit(skb, &data, sizeof(data));
+          return TC_ACT_OK;
+        }
+
+        u16 i = 0;
+        struct dns_char_t *c;
+        for(i = 0; i<255;i++){
+          c = cursor_advance(cursor, 1);
+          if (c->c == 0)
+            break;
+          key.p[i] = c->c;
+        }
+
+        struct Leaf * lookup_leaf = dns_list.lookup(&key);
+
+        // If DNS name is contained in our map, keep the packet
+        if(lookup_leaf) {
+          __builtin_memcpy(&data.msg, DROPPED_MSG, sizeof(DROPPED_MSG));
+		  events.perf_submit(skb, &data, sizeof(data));
+          return TC_ACT_SHOT;
+        }
+		else{
+			__builtin_memcpy(&data.msg, ACCEPTED_MSG, sizeof(ACCEPTED_MSG));
+		  events.perf_submit(skb, &data, sizeof(data));
+          return TC_ACT_OK;
+		}
+      }
+	}
+	
+	__builtin_memcpy(&data.msg, ACCEPTED_MSG, sizeof(ACCEPTED_MSG));
 	
 	events.perf_submit(skb, &data, sizeof(data));
 	return TC_ACT_OK;
