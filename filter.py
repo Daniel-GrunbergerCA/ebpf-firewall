@@ -18,10 +18,11 @@ INGRESS_TYPE = "ingress"
 HOST_MODE = "HOST"
 CONTAINER_MODE = "CONTAINER"
 TABLE_NAME = "ips_list"
-SOURCE_FILE = 'ebpf.c'
+BLACKLIST_SOURCE_FILE = 'ebpfblacklist.c'
+WHITELIST_SOURCE_FILE = 'ebpfwhitelist.c'
 
 class Firewall:
-    def __init__(self, filter_type, ips,block, filter_mode, interface, container_name="", trace=False, dns_hostnames=""):
+    def __init__(self, filter_type, ips,block, filter_mode, interface, is_whitelist, container_name="", trace=False, dns_hostnames=""):
         self.filter_type = filter_type
         if self.filter_type == INGRESS_TYPE:
             self.func = "filter_src"
@@ -31,7 +32,7 @@ class Firewall:
         self.ips = ips
         self.block = block
         self.filter_mode = filter_mode
-        self.src_file = SOURCE_FILE
+        self.src_file = WHITELIST_SOURCE_FILE if is_whitelist else BLACKLIST_SOURCE_FILE
         self.container_name = container_name
         self.interface = interface
         self.trace = trace
@@ -39,6 +40,7 @@ class Firewall:
             self.interface = self.get_veth_for_container_name()
         self.ipr  = pyroute2.IPRoute()
         self.b =  BPF(src_file=self.src_file)
+        self.is_whitelist = is_whitelist
 
     
     def dns_filter(self):
@@ -136,7 +138,6 @@ class Firewall:
             addr = ctypes.c_uint32(int(bad_ip))
             ips_table[addr] = ips_table.Leaf(True)
 
-        
         fn = self.b.load_func(self.func, BPF.SCHED_CLS)
         links = self.ipr.link_lookup(ifname=self.interface)
         idx = links[0]
