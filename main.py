@@ -8,6 +8,7 @@ from yaml.loader import SafeLoader
 def init_parser():
     parser = optparse.OptionParser()
     parser.add_option("-m", "--mode", dest="mode", help="Filter mode. Options: ingress, egress")
+    parser.add_option("-w", "--is_whitelist", dest="is_whitelist", help="Filter option. is_whitelist", default=False,  action="store_true")
     parser.add_option("-c", "--container", dest="container", help="The container name")
     parser.add_option("-i", "--interface", dest="interface", help="The interface name")
     parser.add_option( "--ips", dest="ips", help="IPs list")
@@ -30,14 +31,14 @@ def validate_args(options):
 
 def apply_egress(options, filter_mode):
     firewall = filter.Firewall( interface=options.interface, filter_type = filter.EGRESS_TYPE, \
-        ips=options.ips, block = options.block, filter_mode=filter_mode,\
+        ips=options.ips, block = options.block, filter_mode=filter_mode, is_whitelist=options.is_whitelist,\
             container_name = options.container, trace=options.trace, dns_hostnames=options.dns_hostnames)
     firewall.apply_filter()
 
 
 def apply_ingress(options, filter_mode):
     firewall = filter.Firewall( interface=options.interface, filter_type = filter.INGRESS_TYPE, \
-        ips=options.ips, block = options.block, filter_mode=filter_mode,\
+        ips=options.ips, block = options.block, filter_mode=filter_mode, is_whitelist=options.is_whitelist,\
             container_name = options.container, trace=options.trace, dns_hostnames=options.dns_hostnames)
     firewall.apply_filter()
 
