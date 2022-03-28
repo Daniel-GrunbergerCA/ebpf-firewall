@@ -1,8 +1,8 @@
-
 import optparse
 import filter
 import ipaddress
-
+import yaml
+from yaml.loader import SafeLoader
 
 
 def init_parser():
@@ -13,11 +13,14 @@ def init_parser():
     parser.add_option( "--ips", dest="ips", help="IPs list")
     parser.add_option( "--dns-hostnames", dest="dns_hostnames", help="DNS hostnames list", default="")
     parser.add_option( "--block", dest="block", help="blacklist", default=True,  action="store_true")
-    parser.add_option( "-t", "--trace", dest="trace", help="enable tracing", default=False,  action="store_true")
+    parser.add_option( "--use-from", dest="yaml_file", help="YAML config file ", default="")
+    parser.add_option( "-t", "--trace", dest="trace", help="enable tracing", default=True,  action="store_true")
     return parser.parse_args()
 
 
 def validate_args(options):
+    if options.yaml_file != "":
+        return
     if not options.mode:
         print("[E] No mode specified.  -h for help.")
         exit(0)
@@ -38,12 +41,36 @@ def apply_ingress(options, filter_mode):
             container_name = options.container, trace=options.trace, dns_hostnames=options.dns_hostnames)
     firewall.apply_filter()
 
+def parse_yaml(yaml_file):
+    container_name = ""
+    ips = []
+    with open(yaml_file) as f:
+        data = yaml.load(f, Loader=SafeLoader)
+        mode = data['mode']
+        try:
+            ips = data['ips']
+        except KeyError:
+            container_name = data['container']
+        dns_hostnames = data['dns-hostnames']
+        filter_type = data['filter-type']
+
+    return mode, ips, dns_hostnames, filter_type, container_name
+
 def main():
+    
     (options, arguments) = init_parser()
     
-    options.ips=[ipaddress.ip_address(ip) for ip in  options.ips.split(",")]
-
     validate_args(options)
+
+
+    if options.yaml_file != "":
+        options.block, options.ips, options.dns_hostnames, options.mode, options.container = parse_yaml(options.yaml_file)
+        options.ips=[ipaddress.ip_address(ip) for ip in  options.ips]
+
+    else:
+        options.ips=[ipaddress.ip_address(ip) for ip in  options.ips.split(",")]
+        options.dns_hostnames = options.dns_hostnames.split(",")
+
     if options.mode == filter.EGRESS_TYPE:
         if options.container:
             filter_mode = filter.CONTAINER_MODE
@@ -66,6 +93,7 @@ def main():
 if __name__ == "__main__":
     main()
 
+# python main.py  -i eth0  --use-from policies/egress.yaml
 # python main.py -m egress -i eth0 --ips 216.58.212.206 -t
 # tc qdisc del dev vetha6b026c parent ffff:
 #  docker run -dit --name alpine3 alpine ash

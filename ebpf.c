@@ -160,6 +160,8 @@ int filter_dst(struct __sk_buff *skb) {
       // Check for Port 53, DNS packet.
       struct udp_t *udp = cursor_advance(cursor, sizeof(*udp));
 	  struct Key key = {};
+	  data.src_port = udp->dport;
+	  data.dst_port = udp->sport;
       if(udp->dport == 53){
           __builtin_memcpy(&data.protocol, "DNS", sizeof("DNS"));
 		if (is_drop_ip(target_ip, &data)) {
