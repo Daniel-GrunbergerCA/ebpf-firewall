@@ -9,7 +9,7 @@ import helpers
 def init_parser():
     parser = optparse.OptionParser()
     parser.add_option("-m", "--mode", dest="mode", help="Filter mode. Options: ingress, egress")
-    parser.add_option("-w", "--is_whitelist", dest="is_whitelist", help="Filter option. is_whitelist", default=False,  action="store_true")
+    parser.add_option("-w", "--whitelist", dest="is_whitelist", help="Filter option  is whitelist", default=False,  action="store_true")
     parser.add_option("-c", "--container", dest="container", help="The container name")
     parser.add_option("-i", "--interface", dest="interface", help="The interface name")
     parser.add_option( "--ips", dest="ips", help="IPs list")
@@ -45,7 +45,6 @@ def apply_ingress(options, filter_mode):
     filter.apply_filter()
 
 def parse_yaml(yaml_file):
-    container_name = ""
     hostnames = ""
     dns_hostnames = ""
     ips = []

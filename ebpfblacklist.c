@@ -39,7 +39,7 @@ struct dns_char_t
     char c;
 } BPF_PACKET_HEADER;
 
-struct Key {
+struct dns_query {
   unsigned char p[255];
 };
 
@@ -56,7 +56,7 @@ struct Leaf {
 };
 
 BPF_HASH(ips_list, u32, bool, 128);
-BPF_HASH(dns_list, struct Key, struct Leaf, 128);
+BPF_HASH(dns_list, struct dns_query, struct Leaf, 128);
 BPF_PERF_OUTPUT(events);
 
 static __inline bool is_drop_ip(u32 ip, struct data_t *data)
@@ -67,6 +67,37 @@ static __inline bool is_drop_ip(u32 ip, struct data_t *data)
    }
    return false;
 }
+
+static __inline bool is_http(unsigned long p[])
+{
+   //find a match with an HTTP message
+			//HTTP
+			if ((p[0] == 'H') && (p[1] == 'T') && (p[2] == 'T') && (p[3] == 'P')) {
+				return true;
+			}
+			//GET
+			else if ((p[0] == 'G') && (p[1] == 'E') && (p[2] == 'T')) {
+				return true;
+			}
+			//POST
+			else if ((p[0] == 'P') && (p[1] == 'O') && (p[2] == 'S') && (p[3] == 'T')) {
+				return true;
+			}
+			//PUT
+			else if ((p[0] == 'P') && (p[1] == 'U') && (p[2] == 'T')) {
+				return true;
+			}
+			//DELETE
+			else if ((p[0] == 'D') && (p[1] == 'E') && (p[2] == 'L') && (p[3] == 'E') && (p[4] == 'T') && (p[5] == 'E')) {
+				return true;
+			}
+			//HEAD
+			else if ((p[0] == 'H') && (p[1] == 'E') && (p[2] == 'A') && (p[3] == 'D')) {
+				return true;
+			}
+			return false;
+}
+
 
 
 
@@ -95,10 +126,10 @@ int filter_dst(struct __sk_buff *skb) {
 	
 	 if (ip->nextp == IP_ICMP) {
 		__builtin_memcpy(&data.protocol, "ICMP", sizeof("ICMP"));
-		if (is_drop_ip(target_ip, &data)) {
-			events.perf_submit(skb, &data, sizeof(data));
-			return TC_ACT_SHOT;
-		}
+		if (ips_list.lookup(&target_ip)) {
+		__builtin_memcpy(&data.msg, DROPPED_MSG, sizeof(DROPPED_MSG));
+   		goto SUBMIT_AND_SHOT;
+	}
 	}
 	else if (ip->nextp == IP_TCP) {
 		void *_ = cursor_advance(cursor, (ip_header_length-sizeof(*ip)));
@@ -119,60 +150,36 @@ int filter_dst(struct __sk_buff *skb) {
 				p[i] = load_byte(skb, payload_offset + i);
 			}
 
-			//find a match with an HTTP message
-			//HTTP
-			if ((p[0] == 'H') && (p[1] == 'T') && (p[2] == 'T') && (p[3] == 'P')) {
-				__builtin_memcpy(&data.protocol, "HTTP", sizeof("HTTP"));
-			}
-			//GET
-			else if ((p[0] == 'G') && (p[1] == 'E') && (p[2] == 'T')) {
-				__builtin_memcpy(&data.protocol, "HTTP", sizeof("HTTP"));
-			}
-			//POST
-			else if ((p[0] == 'P') && (p[1] == 'O') && (p[2] == 'S') && (p[3] == 'T')) {
-				__builtin_memcpy(&data.protocol, "HTTP", sizeof("HTTP"));
-			}
-			//PUT
-			else if ((p[0] == 'P') && (p[1] == 'U') && (p[2] == 'T')) {
-				__builtin_memcpy(&data.protocol, "HTTP", sizeof("HTTP"));
-			}
-			//DELETE
-			else if ((p[0] == 'D') && (p[1] == 'E') && (p[2] == 'L') && (p[3] == 'E') && (p[4] == 'T') && (p[5] == 'E')) {
-				__builtin_memcpy(&data.protocol, "HTTP", sizeof("HTTP"));
-			}
-			//HEAD
-			else if ((p[0] == 'H') && (p[1] == 'E') && (p[2] == 'A') && (p[3] == 'D')) {
+			if  (is_http(p)) {
 				__builtin_memcpy(&data.protocol, "HTTP", sizeof("HTTP"));
 			}
 			else {
 				__builtin_memcpy(&data.protocol, "TCP", sizeof("TCP"));
 			}
-		
 			}
-			data.src_port = tcp->src_port;
-			data.dst_port = tcp->dst_port;
-	if (is_drop_ip(target_ip, &data)) {
-   		events.perf_submit(skb, &data, sizeof(data));
-		return TC_ACT_SHOT;
+		
+	data.src_port = tcp->src_port;
+	data.dst_port = tcp->dst_port;
+
+	if (ips_list.lookup(&target_ip)) {
+		__builtin_memcpy(&data.msg, DROPPED_MSG, sizeof(DROPPED_MSG));
+   	 	goto SUBMIT_AND_SHOT;
 	}
 	}
 	else if (ip->nextp == IPPROTO_UDP){
       // Check for Port 53, DNS packet.
       struct udp_t *udp = cursor_advance(cursor, sizeof(*udp));
-	  struct Key key = {};
-	  data.src_port = udp->dport;
-	  data.dst_port = udp->sport;
+	  struct dns_query key = {};
       if(udp->dport == 53){
           __builtin_memcpy(&data.protocol, "DNS", sizeof("DNS"));
-		if (is_drop_ip(target_ip, &data)) {
-   		 events.perf_submit(skb, &data, sizeof(data));
-		 return TC_ACT_SHOT;
+		if (ips_list.lookup(&target_ip)) {
+		__builtin_memcpy(&data.msg, DROPPED_MSG, sizeof(DROPPED_MSG));
+   		 goto SUBMIT_AND_SHOT;
 	}
         struct dns_hdr_t *dns_hdr = cursor_advance(cursor, sizeof(*dns_hdr));
         // Do nothing if packet is not a request.
         if((dns_hdr->flags >>15) != 0) {
-		  events.perf_submit(skb, &data, sizeof(data));
-          return TC_ACT_OK;
+		   goto SUBMIT_AND_KEEP;
         }
 
         u16 i = 0;
@@ -189,22 +196,26 @@ int filter_dst(struct __sk_buff *skb) {
         // If DNS name is contained in our map, keep the packet
         if(lookup_leaf) {
           __builtin_memcpy(&data.msg, DROPPED_MSG, sizeof(DROPPED_MSG));
-		  events.perf_submit(skb, &data, sizeof(data));
-          return TC_ACT_SHOT;
+		  goto SUBMIT_AND_SHOT;
         }
 		else{
 			__builtin_memcpy(&data.msg, ACCEPTED_MSG, sizeof(ACCEPTED_MSG));
-		  events.perf_submit(skb, &data, sizeof(data));
-          return TC_ACT_OK;
+		  goto SUBMIT_AND_KEEP;
 		}
       }
 	}
 	
 	__builtin_memcpy(&data.msg, ACCEPTED_MSG, sizeof(ACCEPTED_MSG));
 	
+	SUBMIT_AND_SHOT:
+	events.perf_submit(skb, &data, sizeof(data));
+    return TC_ACT_SHOT;
+
+	SUBMIT_AND_KEEP:
 	events.perf_submit(skb, &data, sizeof(data));
 	return TC_ACT_OK;
 }
+
 
 
 
@@ -236,8 +247,7 @@ int filter_src(struct __sk_buff *skb) {
 		__builtin_memcpy(&data.protocol, "ICMP", sizeof("ICMP"));
 		if (ips_list.lookup(&target_ip)) {
 		__builtin_memcpy(&data.msg, DROPPED_MSG, sizeof(DROPPED_MSG));
-   		events.perf_submit(skb, &data, sizeof(data));
-		return TC_ACT_SHOT;
+   		goto SUBMIT_AND_SHOT;
 	}
 	}
 	else if (ip->nextp == IP_TCP) {
@@ -259,60 +269,36 @@ int filter_src(struct __sk_buff *skb) {
 				p[i] = load_byte(skb, payload_offset + i);
 			}
 
-			//find a match with an HTTP message
-			//HTTP
-			if ((p[0] == 'H') && (p[1] == 'T') && (p[2] == 'T') && (p[3] == 'P')) {
-				__builtin_memcpy(&data.protocol, "HTTP", sizeof("HTTP"));
-			}
-			//GET
-			else if ((p[0] == 'G') && (p[1] == 'E') && (p[2] == 'T')) {
-				__builtin_memcpy(&data.protocol, "HTTP", sizeof("HTTP"));
-			}
-			//POST
-			else if ((p[0] == 'P') && (p[1] == 'O') && (p[2] == 'S') && (p[3] == 'T')) {
-				__builtin_memcpy(&data.protocol, "HTTP", sizeof("HTTP"));
-			}
-			//PUT
-			else if ((p[0] == 'P') && (p[1] == 'U') && (p[2] == 'T')) {
-				__builtin_memcpy(&data.protocol, "HTTP", sizeof("HTTP"));
-			}
-			//DELETE
-			else if ((p[0] == 'D') && (p[1] == 'E') && (p[2] == 'L') && (p[3] == 'E') && (p[4] == 'T') && (p[5] == 'E')) {
-				__builtin_memcpy(&data.protocol, "HTTP", sizeof("HTTP"));
-			}
-			//HEAD
-			else if ((p[0] == 'H') && (p[1] == 'E') && (p[2] == 'A') && (p[3] == 'D')) {
+			if  (is_http(p)) {
 				__builtin_memcpy(&data.protocol, "HTTP", sizeof("HTTP"));
 			}
 			else {
 				__builtin_memcpy(&data.protocol, "TCP", sizeof("TCP"));
 			}
-		
 			}
-			data.src_port = tcp->src_port;
-			data.dst_port = tcp->dst_port;
+		
+	data.src_port = tcp->src_port;
+	data.dst_port = tcp->dst_port;
+
 	if (ips_list.lookup(&target_ip)) {
 		__builtin_memcpy(&data.msg, DROPPED_MSG, sizeof(DROPPED_MSG));
-   		events.perf_submit(skb, &data, sizeof(data));
-		return TC_ACT_SHOT;
+   	 	goto SUBMIT_AND_SHOT;
 	}
 	}
 	else if (ip->nextp == IPPROTO_UDP){
       // Check for Port 53, DNS packet.
       struct udp_t *udp = cursor_advance(cursor, sizeof(*udp));
-	  struct Key key = {};
+	  struct dns_query key = {};
       if(udp->dport == 53){
           __builtin_memcpy(&data.protocol, "DNS", sizeof("DNS"));
 		if (ips_list.lookup(&target_ip)) {
 		__builtin_memcpy(&data.msg, DROPPED_MSG, sizeof(DROPPED_MSG));
-   		events.perf_submit(skb, &data, sizeof(data));
-		return TC_ACT_SHOT;
+   		 goto SUBMIT_AND_SHOT;
 	}
         struct dns_hdr_t *dns_hdr = cursor_advance(cursor, sizeof(*dns_hdr));
         // Do nothing if packet is not a request.
         if((dns_hdr->flags >>15) != 0) {
-		  events.perf_submit(skb, &data, sizeof(data));
-          return TC_ACT_OK;
+		   goto SUBMIT_AND_KEEP;
         }
 
         u16 i = 0;
@@ -329,19 +315,22 @@ int filter_src(struct __sk_buff *skb) {
         // If DNS name is contained in our map, keep the packet
         if(lookup_leaf) {
           __builtin_memcpy(&data.msg, DROPPED_MSG, sizeof(DROPPED_MSG));
-		  events.perf_submit(skb, &data, sizeof(data));
-          return TC_ACT_SHOT;
+		  goto SUBMIT_AND_SHOT;
         }
 		else{
 			__builtin_memcpy(&data.msg, ACCEPTED_MSG, sizeof(ACCEPTED_MSG));
-		  events.perf_submit(skb, &data, sizeof(data));
-          return TC_ACT_OK;
+		  goto SUBMIT_AND_KEEP;
 		}
       }
 	}
 	
 	__builtin_memcpy(&data.msg, ACCEPTED_MSG, sizeof(ACCEPTED_MSG));
 	
+	SUBMIT_AND_SHOT:
+	events.perf_submit(skb, &data, sizeof(data));
+    return TC_ACT_SHOT;
+
+	SUBMIT_AND_KEEP:
 	events.perf_submit(skb, &data, sizeof(data));
 	return TC_ACT_OK;
 }
