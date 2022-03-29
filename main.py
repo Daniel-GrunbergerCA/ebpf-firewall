@@ -1,8 +1,9 @@
 import optparse
-import filter
+import firewall
 import ipaddress
 import yaml
 from yaml.loader import SafeLoader
+import helpers
 
 
 def init_parser():
@@ -13,6 +14,7 @@ def init_parser():
     parser.add_option("-i", "--interface", dest="interface", help="The interface name")
     parser.add_option( "--ips", dest="ips", help="IPs list")
     parser.add_option( "--dns-hostnames", dest="dns_hostnames", help="DNS hostnames list", default="")
+    parser.add_option( "--hostnames", dest="hostnames", help="hostnames list", default="")
     parser.add_option( "--block", dest="block", help="blacklist", default=True,  action="store_true")
     parser.add_option( "--use-from", dest="yaml_file", help="YAML config file ", default="")
     parser.add_option( "-t", "--trace", dest="trace", help="enable tracing", default=True,  action="store_true")
@@ -30,32 +32,48 @@ def validate_args(options):
         exit(0)
 
 def apply_egress(options, filter_mode):
-    firewall = filter.Firewall( interface=options.interface, filter_type = filter.EGRESS_TYPE, \
+    filter = firewall.Firewall( interface=options.interface, filter_type = firewall.EGRESS_TYPE, \
         ips=options.ips, block = options.block, filter_mode=filter_mode, is_whitelist=options.is_whitelist,\
             container_name = options.container, trace=options.trace, dns_hostnames=options.dns_hostnames)
-    firewall.apply_filter()
+    filter.apply_filter()
 
 
 def apply_ingress(options, filter_mode):
-    firewall = filter.Firewall( interface=options.interface, filter_type = filter.INGRESS_TYPE, \
+    filter = firewall.Firewall( interface=options.interface, filter_type = firewall.INGRESS_TYPE, \
         ips=options.ips, block = options.block, filter_mode=filter_mode, is_whitelist=options.is_whitelist,\
             container_name = options.container, trace=options.trace, dns_hostnames=options.dns_hostnames)
-    firewall.apply_filter()
+    filter.apply_filter()
 
 def parse_yaml(yaml_file):
     container_name = ""
+    hostnames = ""
+    dns_hostnames = ""
     ips = []
     with open(yaml_file) as f:
         data = yaml.load(f, Loader=SafeLoader)
-        mode = data['mode']
+        try:
+            mode = data['mode']
+            filter_type = data['filter-type']
+        except KeyError:
+            print('Invalid YAML.')
+            exit(0)
         try:
             ips = data['ips']
         except KeyError:
-            container_name = data['container']
-        dns_hostnames = data['dns-hostnames']
-        filter_type = data['filter-type']
-
-    return mode, ips, dns_hostnames, filter_type, container_name
+            pass
+        try:
+            hostnames = data['hostnames']
+        except KeyError:
+            pass
+        try:
+            dns_hostnames = data['dns-hostnames']
+        except KeyError:
+            pass
+    
+    if len(ips) == 0 and len(hostnames) == 0 and len(dns_hostnames) == 0:
+        print('Invalid YAML.')
+        exit(0)
+    return mode, ips, dns_hostnames, filter_type,  hostnames
 
 def main():
     
@@ -65,28 +83,33 @@ def main():
 
 
     if options.yaml_file != "":
-        options.block, options.ips, options.dns_hostnames, options.mode, options.container = parse_yaml(options.yaml_file)
+        options.block, options.ips, options.dns_hostnames, options.mode, options.hostnames = parse_yaml(options.yaml_file)
+        for hostname in options.hostnames:
+            ip_list = helpers.resolve_hostname(hostname)
+        if options.hostnames != "":
+            for ip in ip_list:
+                options.ips.append(ip)
         options.ips=[ipaddress.ip_address(ip) for ip in  options.ips]
 
     else:
         options.ips=[ipaddress.ip_address(ip) for ip in  options.ips.split(",")]
         options.dns_hostnames = options.dns_hostnames.split(",")
 
-    if options.mode == filter.EGRESS_TYPE:
+    if options.mode == firewall.EGRESS_TYPE:
         if options.container:
-            filter_mode = filter.CONTAINER_MODE
+            filter_mode = firewall.CONTAINER_MODE
         else:
-            filter_mode = filter.HOST_MODE
+            filter_mode = firewall.HOST_MODE
 
         apply_egress(options, filter_mode)
 
 
 
-    elif options.mode == filter.INGRESS_TYPE:
+    elif options.mode == firewall.INGRESS_TYPE:
         if options.container:
-            filter_mode=filter.CONTAINER_MODE
+            filter_mode=firewall.CONTAINER_MODE
         else:
-            filter_mode=filter.HOST_MODE
+            filter_mode=firewall.HOST_MODE
 
         apply_ingress(options, filter_mode)
 

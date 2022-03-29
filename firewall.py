@@ -11,6 +11,7 @@ import threading
 import signal
 import requests
 import helpers
+from pprint import pprint
 
 DNS_TABLE = "dns_list"
 EGRESS_TYPE = "egress"
@@ -44,6 +45,7 @@ class Firewall:
 
     
     def dns_filter(self):
+        print('[+] Applying DNS filter...')
         dns_table = self.b.get_table(DNS_TABLE)
         for hostname in self.dns_hostnames:
             self.add_cache_entry(dns_table, hostname)
@@ -67,11 +69,16 @@ class Firewall:
             # add qdisc
             self.ipr.tc('add','ingress', idx, "ffff:")
         except:
-            print("filter already exists")
+            # filter already exists
+            self.ipr.tc("del", "ingress", idx, "ffff:")
+            try:
+                self.ipr.tc('add','ingress', idx, "ffff:")
+            except:
+                print("[-] Failed to apply filter")
 
         self.ipr.tc("add-filter", "bpf", idx,  fd=fn.fd, name=fn.name, parent="ffff:",  action="drop", classid=2, **TC_ARGS)
             
-        print('ingress applied')
+        print('[+] Ingress filter applied')
 
         if self.trace:
             self.handle_tracing()
@@ -88,9 +95,15 @@ class Firewall:
             self.ipr.tc("add-filter", "bpf", idx,  fd=fn.fd, name=fn.name,
                     parent="ffff:fff3",  action="drop", **TC_ARGS)
         except:
-            print("filter already exists")
+            os.system(f"tc -s filter del dev {self.interface} egress")
+            try:
+                self.ipr.tc('replace','clsact', idx)
+                self.ipr.tc("add-filter", "bpf", idx,  fd=fn.fd, name=fn.name,
+                parent="ffff:fff3",  action="drop", **TC_ARGS)
+            except:
+                print("[+] Failed to apply egress filter")
 
-        print('filter applied')
+        print('[+] Egress filter applied')
         if self.trace:
             self.handle_tracing()
         else:
@@ -111,7 +124,11 @@ class Firewall:
 
         fn = self.b.load_func(self.func, BPF.SCHED_CLS)
         links = self.ipr.link_lookup(ifname=self.interface)
-        idx = links[0]
+        try:
+            idx = links[0]
+        except:
+            print(f'[-] Interface {self.interface} not valid')
+            exit(0)
         if self.filter_type == EGRESS_TYPE:
             if self.filter_mode == HOST_MODE:
                 self.apply_egress(idx,fn, TC_ARGS)

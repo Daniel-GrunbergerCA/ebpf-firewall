@@ -40,6 +40,25 @@ def update_ui_data(event):
 
 
 
+def resolve_hostname(hostname):
+    return list(
+        i        # raw socket structure
+            [4]  # internet protocol info
+            [0]  # address
+        for i in 
+        socket.getaddrinfo(
+            hostname,
+            0  # port, required
+        )
+        if i[0] is socket.AddressFamily.AF_INET  # ipv4
+
+        # ignore duplicate addresses with other socket types
+        and i[1] is socket.SocketKind.SOCK_RAW  
+    )
+
+
+
+
 def get_veth_for_container_name(container_name):
         inspect_data = os.popen(f'docker inspect {container_name}').read()
         json_obj = json.loads(inspect_data)[0]

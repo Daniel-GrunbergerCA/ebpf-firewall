@@ -4,5 +4,4 @@ ips:
     - 172.34.54.65
 dns-hostnames:
     - "google.com"
-    - "facebook.com"
 filter-type: ingress
