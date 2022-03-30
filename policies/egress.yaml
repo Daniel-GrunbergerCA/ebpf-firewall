@@ -11,3 +11,4 @@ filter-type: egress
 hostnames: 
     - moodle.jct.ac.il
     - linkedin.com
+    

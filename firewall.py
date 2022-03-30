@@ -70,7 +70,7 @@ class Firewall:
             self.ipr.tc('add','ingress', idx, "ffff:")
         except:
             # filter already exists
-            self.ipr.tc("del", "ingress", idx, "ffff:")
+            os.system(f"tc qdisc del dev {self.interface} clsact")
             try:
                 self.ipr.tc('add','ingress', idx, "ffff:")
             except:

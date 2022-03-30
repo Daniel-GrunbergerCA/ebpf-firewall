@@ -207,13 +207,14 @@ int filter_dst(struct __sk_buff *skb) {
 	
 	__builtin_memcpy(&data.msg, ACCEPTED_MSG, sizeof(ACCEPTED_MSG));
 	
+	SUBMIT_AND_KEEP:
+	events.perf_submit(skb, &data, sizeof(data));
+	return TC_ACT_OK;
+	
 	SUBMIT_AND_SHOT:
 	events.perf_submit(skb, &data, sizeof(data));
     return TC_ACT_SHOT;
 
-	SUBMIT_AND_KEEP:
-	events.perf_submit(skb, &data, sizeof(data));
-	return TC_ACT_OK;
 }
 
 
